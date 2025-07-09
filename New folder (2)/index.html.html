@@ -1,0 +1,267 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Inventory Lookup</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+
+  <!-- Firebase v8 -->
+  <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-app.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-database.js"></script>
+
+  <!-- QuaggaJS -->
+  <script src="https://unpkg.com/@ericblade/quagga2@1.2.6/dist/quagga.js"></script>
+
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      padding: 20px;
+      background-color: #f2f2f2;
+    }
+
+    h2 {
+      color: #333;
+    }
+
+    input,
+    button,
+    select {
+      width: 100%;
+      padding: 12px;
+      margin-top: 10px;
+      font-size: 16px;
+      box-sizing: border-box;
+    }
+
+    #searchBtn {
+      background-color: #007bff;
+      color: white;
+      border: none;
+    }
+
+    #scanBtn {
+      background-color: #28a745;
+      color: white;
+      border: none;
+    }
+
+    #cancelScan {
+      display: none;
+      position: fixed;
+      top: 10px;
+      right: 10px;
+      z-index: 1000;
+      padding: 10px 16px;
+      font-size: 16px;
+      background: red;
+      color: white;
+      border: none;
+      border-radius: 5px;
+    }
+
+    #scanner {
+      width: 100vw;
+      height: 100vh;
+      position: fixed;
+      top: 0;
+      left: 0;
+      z-index: 999;
+      background-color: black;
+      display: none;
+    }
+
+    #scanner video {
+      width: 100% !important;
+      height: 100% !important;
+      object-fit: cover !important;
+    }
+
+    #result {
+      margin-top: 20px;
+      background: white;
+      padding: 15px;
+      border-radius: 8px;
+      box-shadow: 0 0 4px rgba(0, 0, 0, 0.1);
+    }
+  </style>
+</head>
+<body>
+  <h2>Inventory Lookup</h2>
+
+  <input
+    id="barcodeInput"
+    type="tel"
+    inputmode="numeric"
+    pattern="[0-9]*"
+    placeholder="Enter barcode manually"
+  />
+
+  <button id="searchBtn">Search</button>
+  <button id="scanBtn">📷 Scan Barcode</button>
+  <button id="cancelScan">❌ Cancel</button>
+
+  <div id="scanner"></div>
+
+  <div id="filters" style="margin-top: 20px; display: none;">
+    <label>Choose Size:</label>
+    <select id="sizeFilter"></select>
+  </div>
+
+  <div id="result"></div>
+
+  <script>
+    // ✅ Initialize Firebase
+    const firebaseConfig = {
+      apiKey: "AIzaSyBzCzgtfhwMM_4m1h9bfOPIW_gBerXykss",
+      authDomain: "barcode-inventory-a06dc.firebaseapp.com",
+      databaseURL: "https://barcode-inventory-a06dc-default-rtdb.firebaseio.com",
+      projectId: "barcode-inventory-a06dc",
+      storageBucket: "barcode-inventory-a06dc.appspot.com",
+      messagingSenderId: "1053588692116",
+      appId: "1:1053588692116:web:aeeb6633405258d3856881"
+    };
+    firebase.initializeApp(firebaseConfig);
+    const db = firebase.database();
+
+    let allData = [];
+    let sizeMap = {};
+
+    // 🔍 Search manually
+    document.getElementById("searchBtn").addEventListener("click", async () => {
+      const barcodeInput = document.getElementById("barcodeInput").value.trim();
+      const dbRef = db.ref();
+      const snapshot = await dbRef.get();
+
+      const resultDiv = document.getElementById("result");
+      const filtersDiv = document.getElementById("filters");
+      const sizeSelect = document.getElementById("sizeFilter");
+
+      resultDiv.innerHTML = "";
+      filtersDiv.style.display = "none";
+      sizeSelect.innerHTML = "";
+
+      if (!snapshot.exists()) {
+        resultDiv.innerHTML = `<p style="color:red;">No data found.</p>`;
+        return;
+      }
+
+      const data = snapshot.val(); // should be array
+      const scanned = data.find(item => item.Barcode === barcodeInput);
+
+      if (!scanned) {
+        resultDiv.innerHTML = `<p style="color:red;">Barcode not found.</p>`;
+        return;
+      }
+
+      const itemId = scanned["Item ID"];
+      const currentSize = scanned.Size;
+      const sameItemData = data.filter(item => item["Item ID"] === itemId);
+
+      sizeMap = {};
+      sameItemData.forEach(item => {
+        sizeMap[item.Size] = item.Barcode;
+      });
+
+      sizeSelect.innerHTML = Object.keys(sizeMap).map(size =>
+        `<option value="${size}" ${size === currentSize ? "selected" : ""}>${size}</option>`
+      ).join("");
+
+      filtersDiv.style.display = "block";
+      allData = data;
+
+      updateResults(itemId, currentSize);
+    });
+
+    document.getElementById("sizeFilter").addEventListener("change", (e) => {
+      const size = e.target.value;
+      const barcode = sizeMap[size];
+      const itemId = allData.find(item => item.Barcode === barcode)?.["Item ID"];
+      updateResults(itemId, size);
+    });
+
+    function updateResults(itemId, size) {
+      const resultDiv = document.getElementById("result");
+      const filtered = allData.filter(
+        item => item["Item ID"] === itemId && item.Size === size
+      );
+
+      if (filtered.length > 0) {
+        resultDiv.innerHTML = `
+          <h3>Item ID: ${itemId}</h3>
+          <h4>Size: ${size}</h4>
+          <h4>Locations:</h4>
+          <ul>
+            ${filtered.map(item => `<li>${item.Location}: ${item.Quantity}</li>`).join("")}
+          </ul>
+        `;
+      } else {
+        resultDiv.innerHTML = `<p style="color:red;">No data for that size.</p>`;
+      }
+    }
+
+    // 📷 Quagga Scanner
+    const scanBtn = document.getElementById("scanBtn");
+    const cancelBtn = document.getElementById("cancelScan");
+    const scannerDiv = document.getElementById("scanner");
+
+    scanBtn.addEventListener("click", () => {
+      scannerDiv.style.display = "block";
+      cancelBtn.style.display = "block";
+
+      Quagga.init({
+        inputStream: {
+          name: "Live",
+          type: "LiveStream",
+          target: scannerDiv,
+          constraints: {
+            width: 640,
+            height: 480,
+            facingMode: "environment"
+          },
+          area: {
+            top: "0%",
+            right: "0%",
+            left: "0%",
+            bottom: "0%"
+          }
+        },
+        decoder: {
+          readers: ["ean_reader", "code_128_reader", "upc_reader"]
+        },
+        locate: true
+      }, (err) => {
+        if (err) {
+          console.error(err);
+          alert("Camera error. Try HTTPS or Safari.");
+          return;
+        }
+        Quagga.start();
+
+        // ✅ iOS fix
+        const videoEl = document.querySelector("#scanner video");
+        if (videoEl) {
+          videoEl.setAttribute("playsinline", true);
+          videoEl.setAttribute("autoplay", true);
+          videoEl.setAttribute("muted", true);
+          videoEl.play().catch(e => console.warn("Video play blocked:", e));
+        }
+      });
+    });
+
+    cancelBtn.addEventListener("click", () => {
+      Quagga.stop();
+      scannerDiv.style.display = "none";
+      cancelBtn.style.display = "none";
+    });
+
+    Quagga.onDetected((data) => {
+      const code = data.codeResult.code;
+      Quagga.stop();
+      scannerDiv.style.display = "none";
+      cancelBtn.style.display = "none";
+      document.getElementById("barcodeInput").value = code;
+      document.getElementById("searchBtn").click();
+    });
+  </script>
+</body>
+</html>
